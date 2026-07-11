@@ -557,12 +557,22 @@ export default function App() {
 
       const authHeaders = { Authorization: `Bearer ${googleToken}`, "Content-Type": "application/json" };
 
+      // Helper to check response and throw if failed
+      const safeFetch = async (url: string, init: RequestInit) => {
+        const res = await fetch(url, init);
+        if (!res.ok) {
+          const errorMsg = await res.json().catch(() => ({})).then((data) => data.error?.message || `HTTP ${res.status}`);
+          throw new Error(errorMsg);
+        }
+        return res;
+      };
+
       // 1. Upload All local tasks (if scope is "all" or "tasks")
       if (syncScope === "all" || syncScope === "tasks") {
         const currentTasks: Task[] = JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
         // Clean sheet first
         const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Tasks!A2:AA1000:clear`;
-        await fetch(clearUrl, { method: "POST", headers: authHeaders });
+        await safeFetch(clearUrl, { method: "POST", headers: authHeaders });
 
         if (currentTasks.length > 0) {
           const values = currentTasks.map((t) => [
@@ -595,7 +605,7 @@ export default function App() {
             t.startDate || "",
           ]);
           const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Tasks!A2?valueInputOption=USER_ENTERED`;
-          await fetch(writeUrl, {
+          await safeFetch(writeUrl, {
             method: "PUT",
             headers: authHeaders,
             body: JSON.stringify({ values }),
@@ -608,7 +618,7 @@ export default function App() {
       if (syncScope === "all" || syncScope === "users") {
         const currentUsers: UserProfile[] = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
         const clearUsersUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A2:F1000:clear`;
-        await fetch(clearUsersUrl, { method: "POST", headers: authHeaders });
+        await safeFetch(clearUsersUrl, { method: "POST", headers: authHeaders });
 
         if (currentUsers.length > 0) {
           const uValues = currentUsers.map((u) => [
@@ -620,7 +630,7 @@ export default function App() {
             u.password || "123456",
           ]);
           const writeUsersUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A2?valueInputOption=USER_ENTERED`;
-          await fetch(writeUsersUrl, {
+          await safeFetch(writeUsersUrl, {
             method: "PUT",
             headers: authHeaders,
             body: JSON.stringify({ values: uValues }),

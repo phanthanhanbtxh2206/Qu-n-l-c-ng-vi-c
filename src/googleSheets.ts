@@ -157,6 +157,9 @@ async function initializeSheetsData(spreadsheetId: string, token: string) {
     "Folder ID",
     "Folder Name",
     "Sub Tasks",
+    "Parent Recurring ID",
+    "Recurrence Cycle Key",
+    "Start Date",
   ];
 
   // 2. Headers for Users
@@ -280,7 +283,7 @@ async function initializeSheetsData(spreadsheetId: string, token: string) {
     valueInputOption: "USER_ENTERED",
     data: [
       {
-        range: "Tasks!A1:P",
+        range: "Tasks!A1:AA",
         values: [taskHeaders, ...demoTasks],
       },
       {
