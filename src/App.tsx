@@ -53,6 +53,8 @@ import {
   Download,
   Upload,
   Trash2,
+  Copy,
+  Check,
 } from "lucide-react";
 
 // LocalStorage Keys
@@ -119,6 +121,14 @@ export default function App() {
   const [customSpreadsheetId, setCustomSpreadsheetId] = useState("");
   const [domainAuthError, setDomainAuthError] = useState(false);
   const [showSheetsGuide, setShowSheetsGuide] = useState(false);
+  const [showScriptGuide, setShowScriptGuide] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
+  const [syncMethod, setSyncMethod] = useState<"oauth" | "appscript">(() => {
+    return (localStorage.getItem("admin_sync_method") as "oauth" | "appscript") || "appscript";
+  });
+  const [webAppUrl, setWebAppUrl] = useState<string>(() => {
+    return localStorage.getItem("google_apps_script_url") || "";
+  });
 
   const addSyncLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -548,6 +558,57 @@ export default function App() {
 
   // Push local storage source of truth to Google Sheets (Admin only)
   const handlePushToGoogleSheets = async () => {
+    if (syncMethod === "appscript") {
+      if (!webAppUrl) {
+        setSyncStatusMsg("Vui lòng cấu hình URL Google Apps Script Web App trước.");
+        return;
+      }
+      setIsLoadingData(true);
+      setSyncStatusMsg("Đang đồng bộ dữ liệu lên Google Sheets qua Apps Script...");
+      addSyncLog(`Bắt đầu đẩy dữ liệu qua Apps Script Web App (Phạm vi: ${syncScope === "all" ? "Tất cả" : syncScope === "tasks" ? "Nhiệm vụ" : "Nhân viên"})...`);
+
+      try {
+        const currentTasks: Task[] = JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
+        const currentUsers: UserProfile[] = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
+
+        const response = await fetch(webAppUrl, {
+          method: "POST",
+          mode: "cors",
+          redirect: "follow",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8",
+          },
+          body: JSON.stringify({
+            action: "push",
+            tasks: syncScope === "all" || syncScope === "tasks" ? currentTasks : [],
+            users: syncScope === "all" || syncScope === "users" ? currentUsers : [],
+          }),
+        });
+
+        const resText = await response.text();
+        let resJson;
+        try {
+          resJson = JSON.parse(resText);
+        } catch (e) {
+          throw new Error("Không thể phân tích phản hồi từ Web App. Hãy chắc chắn bạn đã Deploy cấu hình Web App ở quyền truy cập 'Anyone' (Bất kỳ ai).");
+        }
+
+        if (resJson.status === "success") {
+          setSyncStatusMsg(resJson.message || "Đồng bộ thành công qua Apps Script!");
+          addSyncLog(resJson.message || "Đồng bộ lên Google Sheets qua Apps Script thành công.");
+        } else {
+          throw new Error(resJson.message || "Lỗi không xác định từ Apps Script.");
+        }
+      } catch (err: any) {
+        console.error(err);
+        setSyncStatusMsg(`Đồng bộ Apps Script thất bại: ${err.message}`);
+        addSyncLog(`Đồng bộ Apps Script thất bại: ${err.message}`);
+      } finally {
+        setIsLoadingData(false);
+      }
+      return;
+    }
+
     if (!googleToken) {
       setSyncStatusMsg("Vui lòng click 'Kết nối Google' trước.");
       return;
@@ -664,6 +725,148 @@ export default function App() {
 
   // Pull tasks and users from Google Sheets and overwrite local storage (Admin only)
   const handlePullFromGoogleSheets = async () => {
+    if (syncMethod === "appscript") {
+      if (!webAppUrl) {
+        setSyncStatusMsg("Vui lòng cấu hình URL Google Apps Script Web App trước.");
+        return;
+      }
+      setIsLoadingData(true);
+      setSyncStatusMsg("Đang tải dữ liệu từ Google Sheets về máy qua Apps Script...");
+      addSyncLog(`Bắt đầu tải dữ liệu qua Apps Script (Chiến lược: ${
+        conflictStrategy === "client-wins"
+          ? "Ưu tiên máy khách (Client Wins)"
+          : conflictStrategy === "server-wins"
+          ? "Ưu tiên máy chủ (Server Wins)"
+          : "Hợp nhất bản mới nhất (Merge Latest)"
+      })...`);
+
+      try {
+        const response = await fetch(webAppUrl, {
+          method: "POST",
+          mode: "cors",
+          redirect: "follow",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8",
+          },
+          body: JSON.stringify({
+            action: "pull",
+          }),
+        });
+
+        const resText = await response.text();
+        let resJson;
+        try {
+          resJson = JSON.parse(resText);
+        } catch (e) {
+          throw new Error("Không thể phân tích phản hồi từ Web App. Hãy chắc chắn bạn đã Deploy cấu hình Web App ở quyền truy cập 'Anyone' (Bất kỳ ai).");
+        }
+
+        if (resJson.status !== "success") {
+          throw new Error(resJson.message || "Lỗi phản hồi từ Google Apps Script.");
+        }
+
+        const fetchedTasks: Task[] = resJson.tasks || [];
+        const fetchedUsers: UserProfile[] = resJson.users || [];
+
+        if (conflictStrategy === "server-wins") {
+          // Overwrite completely
+          if (syncScope === "all" || syncScope === "tasks") {
+            localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(fetchedTasks));
+            setTasks(fetchedTasks);
+            addSyncLog(`[Ghi đè] Đã tải về thành công ${fetchedTasks.length} nhiệm vụ.`);
+          }
+          if (syncScope === "all" || syncScope === "users") {
+            localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(fetchedUsers));
+            setUsersList(fetchedUsers);
+            addSyncLog(`[Ghi đè] Đã tải về thành công ${fetchedUsers.length} nhân sự.`);
+          }
+        } else if (conflictStrategy === "merge-latest") {
+          // Merge based on updated time or existence
+          if (syncScope === "all" || syncScope === "tasks") {
+            const localTasks: Task[] = JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
+            const mergedTasks = [...localTasks];
+
+            fetchedTasks.forEach((ft) => {
+              const matchedIdx = mergedTasks.findIndex((lt) => lt.id === ft.id);
+              if (matchedIdx >= 0) {
+                const localTime = new Date(mergedTasks[matchedIdx].updatedAt || 0).getTime();
+                const remoteTime = new Date(ft.updatedAt || 0).getTime();
+                if (remoteTime > localTime) {
+                  mergedTasks[matchedIdx] = ft;
+                }
+              } else {
+                mergedTasks.push(ft);
+              }
+            });
+
+            localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(mergedTasks));
+            setTasks(mergedTasks);
+            addSyncLog(`[Hợp nhất] Đồng bộ thành công ${mergedTasks.length} nhiệm vụ (Hợp nhất theo thời gian cập nhật).`);
+          }
+
+          if (syncScope === "all" || syncScope === "users") {
+            const localUsers: UserProfile[] = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
+            const mergedUsers = [...localUsers];
+
+            fetchedUsers.forEach((fu) => {
+              const matchedIdx = mergedUsers.findIndex((lu) => lu.email.toLowerCase() === fu.email.toLowerCase());
+              if (matchedIdx >= 0) {
+                mergedUsers[matchedIdx] = fu; // Keep the Google Sheets version as newer standard
+              } else {
+                mergedUsers.push(fu);
+              }
+            });
+
+            localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(mergedUsers));
+            setUsersList(mergedUsers);
+            addSyncLog(`[Hợp nhất] Đồng bộ thành công ${mergedUsers.length} tài khoản nhân sự.`);
+          }
+        } else {
+          // client-wins (When manually pulled, client-wins will still update empty local entries or load new ones, but avoids overwriting edited local items)
+          if (syncScope === "all" || syncScope === "tasks") {
+            const localTasks: Task[] = JSON.parse(localStorage.getItem(LOCAL_TASKS_KEY) || "[]");
+            const mergedTasks = [...localTasks];
+
+            fetchedTasks.forEach((ft) => {
+              const exists = mergedTasks.some((lt) => lt.id === ft.id);
+              if (!exists) {
+                mergedTasks.push(ft);
+              }
+            });
+
+            localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(mergedTasks));
+            setTasks(mergedTasks);
+            addSyncLog(`[Cục bộ ưu tiên] Đã nạp thêm ${mergedTasks.length - localTasks.length} nhiệm vụ mới từ Google Sheets.`);
+          }
+
+          if (syncScope === "all" || syncScope === "users") {
+            const localUsers: UserProfile[] = JSON.parse(localStorage.getItem(LOCAL_USERS_KEY) || "[]");
+            const mergedUsers = [...localUsers];
+
+            fetchedUsers.forEach((fu) => {
+              const exists = mergedUsers.some((lu) => lu.email.toLowerCase() === fu.email.toLowerCase());
+              if (!exists) {
+                mergedUsers.push(fu);
+              }
+            });
+
+            localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(mergedUsers));
+            setUsersList(mergedUsers);
+            addSyncLog(`[Cục bộ ưu tiên] Đã nạp thêm ${mergedUsers.length - localUsers.length} tài khoản mới từ Google Sheets.`);
+          }
+        }
+
+        setSyncStatusMsg("Đã tải và xử lý đồng bộ dữ liệu thành công từ Google Sheets qua Apps Script.");
+      } catch (err: any) {
+        console.error(err);
+        setSyncStatusMsg(`Không thể tải dữ liệu Apps Script: ${err.message}`);
+        addSyncLog(`Thất bại khi tải dữ liệu từ Google Sheets qua Apps Script: ${err.message}`);
+      } finally {
+        setIsLoadingData(false);
+      }
+      return;
+    }
+
     if (!googleToken || !spreadsheetId) {
       setSyncStatusMsg("Chưa kết nối hoặc chưa định cấu hình Google Sheets.");
       return;
@@ -847,14 +1050,30 @@ export default function App() {
     localStorage.setItem(LOCAL_TASKS_KEY, JSON.stringify(currentTasks));
     setTasks(currentTasks);
 
-    // If active user is Admin and Google Token is active, auto-backup in background to keep sheets hot!
-    if (autoSyncEnabled && (syncScope === "all" || syncScope === "tasks") && profile?.role === "admin" && googleToken && spreadsheetId) {
-      try {
-        await saveTask(spreadsheetId, googleToken, task);
-        addSyncLog(`[Tự động] Đã đồng bộ nhiệm vụ mới/cập nhật: "${task.title}".`);
-      } catch (err: any) {
-        console.warn("Background sheet backup failed:", err);
-        addSyncLog(`[Lỗi tự động] Thất bại khi đồng bộ nhiệm vụ "${task.title}": ${err.message}`);
+    // If active user is Admin and Google Sync is active, auto-backup in background to keep sheets hot!
+    if (autoSyncEnabled && (syncScope === "all" || syncScope === "tasks") && profile?.role === "admin") {
+      if (syncMethod === "appscript" && webAppUrl) {
+        try {
+          await fetch(webAppUrl, {
+            method: "POST",
+            mode: "cors",
+            redirect: "follow",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({ action: "save_task", task }),
+          });
+          addSyncLog(`[Tự động] Đã lưu nhiệm vụ "${task.title}" lên Google Sheets.`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi đồng bộ nhiệm vụ "${task.title}" qua Apps Script: ${err.message}`);
+        }
+      } else if (syncMethod === "oauth" && googleToken && spreadsheetId) {
+        try {
+          await saveTask(spreadsheetId, googleToken, task);
+          addSyncLog(`[Tự động] Đã đồng bộ nhiệm vụ mới/cập nhật: "${task.title}".`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi đồng bộ nhiệm vụ "${task.title}": ${err.message}`);
+        }
       }
     }
   };
@@ -867,13 +1086,29 @@ export default function App() {
     setTasks(filtered);
 
     // Backup to sheet if admin is synced
-    if (autoSyncEnabled && (syncScope === "all" || syncScope === "tasks") && profile?.role === "admin" && googleToken && spreadsheetId) {
-      try {
-        await deleteTask(spreadsheetId, googleToken, taskId);
-        addSyncLog(`[Tự động] Đã xóa nhiệm vụ ID: "${taskId}" trên Sheets.`);
-      } catch (err: any) {
-        console.warn("Background sheet backup failed:", err);
-        addSyncLog(`[Lỗi tự động] Thất bại khi xóa nhiệm vụ ID "${taskId}": ${err.message}`);
+    if (autoSyncEnabled && (syncScope === "all" || syncScope === "tasks") && profile?.role === "admin") {
+      if (syncMethod === "appscript" && webAppUrl) {
+        try {
+          await fetch(webAppUrl, {
+            method: "POST",
+            mode: "cors",
+            redirect: "follow",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({ action: "delete_task", taskId }),
+          });
+          addSyncLog(`[Tự động] Đã xóa nhiệm vụ ID: "${taskId}" khỏi Google Sheets.`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi xóa nhiệm vụ ID "${taskId}" qua Apps Script: ${err.message}`);
+        }
+      } else if (syncMethod === "oauth" && googleToken && spreadsheetId) {
+        try {
+          await deleteTask(spreadsheetId, googleToken, taskId);
+          addSyncLog(`[Tự động] Đã xóa nhiệm vụ ID: "${taskId}" trên Sheets.`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi xóa nhiệm vụ ID "${taskId}": ${err.message}`);
+        }
       }
     }
   };
@@ -898,17 +1133,42 @@ export default function App() {
     }
 
     // Sheet auto backup if admin is authenticated
-    if (autoSyncEnabled && (syncScope === "all" || syncScope === "users") && profile?.role === "admin" && googleToken && spreadsheetId) {
-      try {
-        if (originalEmail && originalEmail.toLowerCase() !== updatedProfile.email.toLowerCase()) {
-          // Delete old email entry from Google Sheet
-          await deleteUserProfile(spreadsheetId, googleToken, originalEmail);
+    if (autoSyncEnabled && (syncScope === "all" || syncScope === "users") && profile?.role === "admin") {
+      if (syncMethod === "appscript" && webAppUrl) {
+        try {
+          if (originalEmail && originalEmail.toLowerCase() !== updatedProfile.email.toLowerCase()) {
+            await fetch(webAppUrl, {
+              method: "POST",
+              mode: "cors",
+              redirect: "follow",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({ action: "delete_user", email: originalEmail }),
+            });
+          }
+          await fetch(webAppUrl, {
+            method: "POST",
+            mode: "cors",
+            redirect: "follow",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({ action: "save_user", user: updatedProfile }),
+          });
+          addSyncLog(`[Tự động] Đã đồng bộ nhân viên "${updatedProfile.name}" lên Google Sheets.`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi đồng bộ nhân sự "${updatedProfile.name}" qua Apps Script: ${err.message}`);
         }
-        await saveUserProfile(spreadsheetId, googleToken, updatedProfile);
-        addSyncLog(`[Tự động] Đã đồng bộ nhân viên: "${updatedProfile.name}".`);
-      } catch (err: any) {
-        console.warn("Background sheet backup failed:", err);
-        addSyncLog(`[Lỗi tự động] Thất bại khi đồng bộ nhân sự "${updatedProfile.name}": ${err.message}`);
+      } else if (syncMethod === "oauth" && googleToken && spreadsheetId) {
+        try {
+          if (originalEmail && originalEmail.toLowerCase() !== updatedProfile.email.toLowerCase()) {
+            // Delete old email entry from Google Sheet
+            await deleteUserProfile(spreadsheetId, googleToken, originalEmail);
+          }
+          await saveUserProfile(spreadsheetId, googleToken, updatedProfile);
+          addSyncLog(`[Tự động] Đã đồng bộ nhân viên: "${updatedProfile.name}".`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi đồng bộ nhân sự "${updatedProfile.name}": ${err.message}`);
+        }
       }
     }
   };
@@ -926,13 +1186,29 @@ export default function App() {
     }
 
     // Sheet auto backup if admin is authenticated
-    if (autoSyncEnabled && (syncScope === "all" || syncScope === "users") && profile?.role === "admin" && googleToken && spreadsheetId) {
-      try {
-        await deleteUserProfile(spreadsheetId, googleToken, email);
-        addSyncLog(`[Tự động] Đã xóa nhân viên: "${email}" trên Sheets.`);
-      } catch (err: any) {
-        console.warn("Background sheet backup failed:", err);
-        addSyncLog(`[Lỗi tự động] Thất bại khi xóa nhân sự "${email}": ${err.message}`);
+    if (autoSyncEnabled && (syncScope === "all" || syncScope === "users") && profile?.role === "admin") {
+      if (syncMethod === "appscript" && webAppUrl) {
+        try {
+          await fetch(webAppUrl, {
+            method: "POST",
+            mode: "cors",
+            redirect: "follow",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({ action: "delete_user", email }),
+          });
+          addSyncLog(`[Tự động] Đã xóa nhân viên "${email}" khỏi Google Sheets.`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi xóa nhân sự "${email}" qua Apps Script: ${err.message}`);
+        }
+      } else if (syncMethod === "oauth" && googleToken && spreadsheetId) {
+        try {
+          await deleteUserProfile(spreadsheetId, googleToken, email);
+          addSyncLog(`[Tự động] Đã xóa nhân viên: "${email}" trên Sheets.`);
+        } catch (err: any) {
+          console.warn("Background sheet backup failed:", err);
+          addSyncLog(`[Lỗi tự động] Thất bại khi xóa nhân sự "${email}": ${err.message}`);
+        }
       }
     }
   };
@@ -1482,27 +1758,103 @@ export default function App() {
           {/* SPECIAL ADMIN-ONLY SYNCHRONIZATION CONTROLLER */}
           {activeProfile?.role === "admin" && (
             <div className="bg-white rounded-2xl border border-indigo-100 shadow-sm p-5 mb-6">
+              {/* Method Switcher Tabs */}
+              <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-2">
+                    CỔNG ĐỒNG BỘ GOOGLE SHEETS TRỰC TUYẾN
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Chọn phương thức tối ưu nhất để tự động hóa việc lưu trữ dữ liệu của trung tâm.
+                  </p>
+                </div>
+                
+                <div className="flex p-1 bg-slate-100 rounded-xl max-w-xs sm:max-w-md w-full sm:w-auto self-end sm:self-auto shrink-0">
+                  <button
+                    onClick={() => {
+                      setSyncMethod("appscript");
+                      localStorage.setItem("admin_sync_method", "appscript");
+                      addSyncLog("Chuyển đổi phương thức sang Google Apps Script.");
+                    }}
+                    className={`flex-1 sm:flex-none px-4 py-1.5 text-center text-[11px] font-bold rounded-lg cursor-pointer transition-all ${
+                      syncMethod === "appscript" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    Google Apps Script (Khuyên dùng)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSyncMethod("oauth");
+                      localStorage.setItem("admin_sync_method", "oauth");
+                      addSyncLog("Chuyển đổi phương thức sang OAuth liên kết.");
+                    }}
+                    className={`flex-1 sm:flex-none px-4 py-1.5 text-center text-[11px] font-bold rounded-lg cursor-pointer transition-all ${
+                      syncMethod === "oauth" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    OAuth Firebase (Liên kết Popup)
+                  </button>
+                </div>
+              </div>
+
               <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-3 w-full">
                   <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600 shrink-0">
                     <FileSpreadsheet className="w-6 h-6" />
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-2">
-                      HỘP ĐỒNG BỘ GOOGLE SHEETS (ĐẶC QUYỀN ADMIN)
-                      {googleToken ? (
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold border border-emerald-100 uppercase inline-block">
-                          Đã liên kết
-                        </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+                        {syncMethod === "appscript" ? "ĐỒNG BỘ QUA GOOGLE APPS SCRIPT WEB APP" : "ĐỒNG BỘ QUA OAUTH POPUP WINDOW"}
+                      </span>
+                      {syncMethod === "appscript" ? (
+                        webAppUrl ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold border border-emerald-100 uppercase">
+                            Đã cấu hình Web App
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[9px] font-bold border border-amber-100 uppercase">
+                            Chưa có URL Web App
+                          </span>
+                        )
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[9px] font-bold border border-slate-200 uppercase inline-block">
-                          Chưa liên kết
-                        </span>
+                        googleToken ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold border border-emerald-100 uppercase">
+                            Đã liên kết OAuth
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[9px] font-bold border border-slate-200 uppercase">
+                            Chưa liên kết OAuth
+                          </span>
+                        )
                       )}
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed max-w-2xl">
-                      Chỉ có tài khoản Admin mới sở hữu tính năng đồng bộ này. Bạn có thể tải toàn bộ công việc và nhân sự cục bộ lên Google Sheets, hoặc tải dữ liệu hiện có từ Sheets về máy.
-                    </p>
+                    </div>
+
+                    {syncMethod === "appscript" ? (
+                      <div className="mt-2 space-y-2">
+                        <p className="text-xs text-slate-500 leading-normal max-w-3xl">
+                          Phương thức này không phụ thuộc vào Firebase, giúp loại bỏ hoàn toàn các lỗi chặn tên miền (unauthorized-domain). Bạn chỉ cần dán URL Web App đã phát hành từ Google Sheets vào đây.
+                        </p>
+                        <div className="flex flex-col sm:flex-row gap-2 max-w-2xl">
+                          <input
+                            type="text"
+                            value={webAppUrl}
+                            onChange={(e) => {
+                              const url = e.target.value.trim();
+                              setWebAppUrl(url);
+                              localStorage.setItem("google_apps_script_url", url);
+                            }}
+                            placeholder="Dán Google Apps Script Web App URL tại đây... (https://script.google.com/macros/s/.../exec)"
+                            className="flex-1 px-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-[11px]"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 mt-1 leading-normal max-w-2xl">
+                        Liên kết trực tiếp với tài khoản Google Drive của bạn bằng cửa sổ Popup. Lưu ý phương pháp này yêu cầu phải cấu hình Authorized Domain trên bảng điều khiển Firebase trước khi chạy.
+                      </p>
+                    )}
+
                     {syncStatusMsg && (
                       <p className="text-[10px] text-indigo-600 font-semibold bg-indigo-50/50 px-2 py-1 rounded-lg mt-2 inline-block animate-pulse">
                         {syncStatusMsg}
@@ -1511,47 +1863,74 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                  {!googleToken ? (
-                    <button
-                      onClick={handleConnectGoogle}
-                      disabled={isGoogleLoading}
-                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer shadow-sm transition-all"
-                    >
-                      {isGoogleLoading ? (
-                        <Loader className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Lock className="w-3.5 h-3.5" />
-                      )}
-                      <span>Kết nối Google Sheets</span>
-                    </button>
-                  ) : (
+                {/* Pull & Push Sync Buttons */}
+                <div className="flex flex-wrap items-center gap-2 shrink-0 w-full lg:w-auto justify-end">
+                  {syncMethod === "appscript" ? (
                     <>
                       <button
                         onClick={handlePullFromGoogleSheets}
-                        disabled={isLoadingData}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer transition-all"
+                        disabled={isLoadingData || !webAppUrl}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-700 text-xs font-semibold cursor-pointer transition-all"
                         title="Tải từ Google Sheets về ghi đè bộ nhớ local"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${isLoadingData ? "animate-spin" : ""}`} />
-                        <span>Tải về từ Sheets</span>
+                        <span>Tải dữ liệu về</span>
                       </button>
 
                       <button
                         onClick={handlePushToGoogleSheets}
-                        disabled={isLoadingData}
-                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-all shadow-sm"
+                        disabled={isLoadingData || !webAppUrl}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer transition-all shadow-sm"
                         title="Đẩy dữ liệu local ghi đè lên Google Sheets"
                       >
                         <Database className="w-3.5 h-3.5" />
                         <span>Đồng bộ lên Sheets</span>
                       </button>
                     </>
+                  ) : (
+                    <>
+                      {!googleToken ? (
+                        <button
+                          onClick={handleConnectGoogle}
+                          disabled={isGoogleLoading}
+                          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer shadow-sm transition-all"
+                        >
+                          {isGoogleLoading ? (
+                            <Loader className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Lock className="w-3.5 h-3.5" />
+                          )}
+                          <span>Kết nối Google Sheets</span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={handlePullFromGoogleSheets}
+                            disabled={isLoadingData}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer transition-all"
+                            title="Tải từ Google Sheets về ghi đè bộ nhớ local"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingData ? "animate-spin" : ""}`} />
+                            <span>Tải về từ Sheets</span>
+                          </button>
+
+                          <button
+                            onClick={handlePushToGoogleSheets}
+                            disabled={isLoadingData}
+                            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-all shadow-sm"
+                            title="Đẩy dữ liệu local ghi đè lên Google Sheets"
+                          >
+                            <Database className="w-3.5 h-3.5" />
+                            <span>Đồng bộ lên Sheets</span>
+                          </button>
+                        </>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
 
-              {/* Toggle advanced settings button */}
+              {/* Toggle advanced settings & guides buttons */}
               <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -1567,19 +1946,33 @@ export default function App() {
                     <span>{showAdvancedSync ? "Ẩn cấu hình" : "Cấu hình nâng cao & Nhật ký"}</span>
                   </button>
 
-                  <button
-                    onClick={() => setShowSheetsGuide(!showSheetsGuide)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all cursor-pointer ${
-                      showSheetsGuide || domainAuthError
-                        ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
-                        : "border-slate-200 text-indigo-600 hover:text-indigo-800 hover:bg-slate-50"
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5" />
-                    <span>{showSheetsGuide ? "Ẩn hướng dẫn liên kết" : "Hướng dẫn bật Google Sheets & Sửa lỗi"}</span>
-                  </button>
+                  {syncMethod === "appscript" ? (
+                    <button
+                      onClick={() => setShowScriptGuide(!showScriptGuide)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all cursor-pointer ${
+                        showScriptGuide
+                          ? "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                          : "border-slate-200 text-indigo-600 hover:text-indigo-800 hover:bg-slate-50"
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>{showScriptGuide ? "Ẩn hướng dẫn cài đặt Script" : "Hướng dẫn tạo Script trên Google Sheets & Lấy URL"}</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowSheetsGuide(!showSheetsGuide)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all cursor-pointer ${
+                        showSheetsGuide || domainAuthError
+                          ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+                          : "border-slate-200 text-indigo-600 hover:text-indigo-800 hover:bg-slate-50"
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>{showSheetsGuide ? "Ẩn hướng dẫn liên kết" : "Hướng dẫn bật Google Sheets & Sửa lỗi"}</span>
+                    </button>
+                  )}
                 </div>
-                {spreadsheetId && (
+                {syncMethod === "oauth" && spreadsheetId && (
                   <span className="text-[10px] text-slate-400 font-mono">
                     Spreadsheet ID: <span className="font-semibold text-slate-600 select-all">{spreadsheetId.slice(0, 10)}...{spreadsheetId.slice(-10)}</span>
                   </span>
@@ -1696,6 +2089,568 @@ export default function App() {
                             Sau khi nhấn Add, tên miền sẽ xuất hiện trong danh sách ủy quyền. Bạn hãy quay lại trang web này, tải lại trang web (F5) rồi nhấp nút <strong>Kết nối Google Sheets</strong>. Lúc này cửa sổ đăng nhập Google sẽ hiển thị thành công!
                           </p>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* GOOGLE APPS SCRIPT WEB APP STEP-BY-STEP SETUP GUIDE */}
+              {showScriptGuide && (
+                <div className="mt-5 p-5 rounded-2xl bg-slate-50 border border-slate-200/80 text-slate-700 text-xs space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-indigo-100 rounded-lg text-indigo-600 shrink-0">
+                        <FileSpreadsheet className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-[13px] uppercase tracking-wide">
+                          HƯỚNG DẪN THIẾT LẬP GOOGLE APPS SCRIPT CHO GOOGLE SHEETS
+                        </h4>
+                        <p className="text-[10px] text-slate-500">Giúp đồng bộ hóa dữ liệu thời gian thực không qua trung gian Firebase</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowScriptGuide(false)}
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      Đóng hướng dẫn [X]
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    {/* Left Steps */}
+                    <div className="lg:col-span-5 space-y-3.5">
+                      <p className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <ArrowRight className="w-3.5 h-3.5 text-indigo-500" />
+                        Các bước triển khai chi tiết:
+                      </p>
+
+                      <div className="relative border-l border-indigo-100 ml-3 pl-4 space-y-4 text-slate-600">
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">1</span>
+                          <p className="font-semibold text-slate-800">Mở Trang Google Sheets</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Mở một tệp Google Sheet mới tinh hoặc hiện có trong tài khoản của bạn.
+                          </p>
+                        </div>
+
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">2</span>
+                          <p className="font-semibold text-slate-800">Mở Trình soạn thảo Apps Script</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Tại thanh menu của Google Sheets, nhấp chọn <strong>Extensions (Tiện ích mở rộng)</strong> rồi chọn <strong>Apps Script</strong>.
+                          </p>
+                        </div>
+
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">3</span>
+                          <p className="font-semibold text-slate-800">Dán Mã nguồn & Lưu tệp</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Xóa toàn bộ mã nguồn mặc định có sẵn trong ô soạn thảo, dán toàn bộ đoạn mã nguồn ở khung bên phải vào, rồi nhấn biểu tượng <strong>Save (Đĩa mềm)</strong> ở trên đầu.
+                          </p>
+                        </div>
+
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">4</span>
+                          <p className="font-semibold text-slate-800">Phát hành (Deploy) Web App</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Nhấp vào nút <strong>Deploy</strong> màu xanh ở phía trên góc phải, chọn <strong>New deployment</strong>. Nhấp biểu tượng bánh răng cài đặt, chọn loại hình là <strong>Web app</strong>.
+                          </p>
+                        </div>
+
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">5</span>
+                          <p className="font-semibold text-slate-800">Cấu hình phân quyền truy cập</p>
+                          <div className="text-[11px] text-slate-500 mt-0.5 leading-relaxed space-y-1 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/50">
+                            <p>Thiết lập chính xác 2 thông số sau đây:</p>
+                            <p>• <strong>Execute as (Chạy dưới dạng):</strong> Chọn <strong className="text-amber-900">Me (Tài khoản Google của tôi)</strong></p>
+                            <p>• <strong>Who has access (Quyền truy cập):</strong> Chọn <strong className="text-amber-900">Anyone (Bất kỳ ai)</strong></p>
+                          </div>
+                        </div>
+
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">6</span>
+                          <p className="font-semibold text-slate-800">Cấp quyền & Lấy URL Web App</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Nhấn nút <strong>Deploy</strong>. Google có thể yêu cầu bạn nhấn <strong>Authorize access</strong>, hãy nhấn xác nhận, chọn tài khoản của bạn, nhấn <strong>Advanced</strong> &rarr; chọn <strong>Go to ... (unsafe)</strong> rồi nhấn <strong>Allow</strong>.
+                          </p>
+                          <p className="text-[11px] text-emerald-600 font-bold mt-1.5 leading-relaxed">
+                            Cuối cùng, sao chép chính xác dòng "Web app URL" (có đuôi là /exec) và dán vào ô nhập liệu ở hộp đồng bộ phía trên là hoàn tất!
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Code Block */}
+                    <div className="lg:col-span-7 flex flex-col h-[480px]">
+                      <div className="flex items-center justify-between bg-slate-900 text-slate-300 px-4 py-2.5 rounded-t-xl border-b border-slate-800">
+                        <span className="font-mono text-[10px] uppercase font-bold tracking-wider text-slate-400">Code Apps Script (Dán vào Code.gs)</span>
+                        <button
+                          onClick={() => {
+                            const code = `function doPost(e) {
+  var response = { status: "error", message: "Unknown action" };
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var action = data.action;
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // Tao sheet neu chua co
+    var taskSheet = ss.getSheetByName("Nhiệm vụ") || ss.getSheetByName("Tasks");
+    if (!taskSheet) {
+      taskSheet = ss.insertSheet("Nhiệm vụ");
+    }
+    var userSheet = ss.getSheetByName("Nhân sự") || ss.getSheetByName("Users");
+    if (!userSheet) {
+      userSheet = ss.insertSheet("Nhân sự");
+    }
+    
+    if (action === "push") {
+      var tasks = data.tasks || [];
+      var users = data.users || [];
+      
+      // 1. Ghi du lieu Nhiem vu
+      taskSheet.clear();
+      var taskHeaders = ["ID", "Tiêu đề", "Mô tả", "Ngày bắt đầu", "Hạn chót", "Trạng thái", "Tiến độ (%)", "Độ ưu tiên", "Người chịu trách nhiệm", "Email người chịu trách nhiệm", "Người kiểm duyệt", "Phòng ban", "Ngày tạo", "Cập nhật lúc"];
+      taskSheet.appendRow(taskHeaders);
+      taskSheet.getRange(1, 1, 1, taskHeaders.length).setFontWeight("bold").setBackground("#EEF2F6");
+      
+      if (tasks.length > 0) {
+        var taskRows = tasks.map(function(t) {
+          return [
+            t.id || "",
+            t.title || "",
+            t.description || "",
+            t.startDate || "",
+            t.dueDate || "",
+            t.status || "",
+            t.progress || 0,
+            t.priority || "",
+            t.assignee || "",
+            t.assigneeEmail || "",
+            t.reviewer || "",
+            t.department || "",
+            t.createdAt || "",
+            t.updatedAt || ""
+          ];
+        });
+        taskSheet.getRange(2, 1, taskRows.length, taskHeaders.length).setValues(taskRows);
+      }
+      
+      // 2. Ghi du lieu Nhan su
+      userSheet.clear();
+      var userHeaders = ["Họ và tên", "Email", "Mật khẩu", "Vai trò", "Phòng ban", "Ngày tạo"];
+      userSheet.appendRow(userHeaders);
+      userSheet.getRange(1, 1, 1, userHeaders.length).setFontWeight("bold").setBackground("#F0FDF4");
+      
+      if (users.length > 0) {
+        var userRows = users.map(function(u) {
+          return [
+            u.name || "",
+            u.email || "",
+            u.password || "",
+            u.role || "",
+            u.department || "",
+            u.createdAt || ""
+          ];
+        });
+        userSheet.getRange(2, 1, userRows.length, userHeaders.length).setValues(userRows);
+      }
+      
+      response = { status: "success", message: "Đồng bộ dữ liệu thành công!" };
+      
+    } else if (action === "pull") {
+      var tasks = [];
+      var users = [];
+      
+      // 1. Doc du lieu Nhiem vu
+      if (taskSheet.getLastRow() > 1) {
+        var taskValues = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, 14).getValues();
+        tasks = taskValues.map(function(row) {
+          return {
+            id: String(row[0]),
+            title: String(row[1]),
+            description: String(row[2]),
+            startDate: row[3] ? new Date(row[3]).toISOString().slice(0, 10) : "",
+            dueDate: row[4] ? new Date(row[4]).toISOString().slice(0, 10) : "",
+            status: String(row[5]),
+            progress: Number(row[6]) || 0,
+            priority: String(row[7]),
+            assignee: String(row[8]),
+            assigneeEmail: String(row[9]),
+            reviewer: String(row[10]),
+            department: String(row[11]),
+            createdAt: row[12] ? new Date(row[12]).toISOString() : "",
+            updatedAt: row[13] ? new Date(row[13]).toISOString() : ""
+          };
+        });
+      }
+      
+      // 2. Doc du lieu Nhan su
+      if (userSheet.getLastRow() > 1) {
+        var userValues = userSheet.getRange(2, 1, userSheet.getLastRow() - 1, 6).getValues();
+        users = userValues.map(function(row) {
+          return {
+            name: String(row[0]),
+            email: String(row[1]),
+            password: String(row[2]),
+            role: String(row[3]),
+            department: String(row[4]),
+            createdAt: row[5] ? new Date(row[5]).toISOString() : ""
+          };
+        });
+      }
+      
+      response = { status: "success", tasks: tasks, users: users };
+      
+    } else if (action === "save_task") {
+      var task = data.task;
+      if (task) {
+        var taskHeaders = ["ID", "Tiêu đề", "Mô tả", "Ngày bắt đầu", "Hạn chót", "Trạng thái", "Tiến độ (%)", "Độ ưu tiên", "Người chịu trách nhiệm", "Email người chịu trách nhiệm", "Người kiểm duyệt", "Phòng ban", "Ngày tạo", "Cập nhật lúc"];
+        if (taskSheet.getLastRow() === 0) {
+          taskSheet.appendRow(taskHeaders);
+          taskSheet.getRange(1, 1, 1, taskHeaders.length).setFontWeight("bold").setBackground("#EEF2F6");
+        }
+        var foundRow = -1;
+        if (taskSheet.getLastRow() > 1) {
+          var ids = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, 1).getValues();
+          for (var i = 0; i < ids.length; i++) {
+            if (String(ids[i][0]) === String(task.id)) {
+              foundRow = i + 2;
+              break;
+            }
+          }
+        }
+        var rowData = [
+          task.id || "",
+          task.title || "",
+          task.description || "",
+          task.startDate || "",
+          task.dueDate || "",
+          task.status || "",
+          task.progress || 0,
+          task.priority || "",
+          task.assignee || "",
+          task.assigneeEmail || "",
+          task.reviewer || "",
+          task.department || "",
+          task.createdAt || "",
+          task.updatedAt || ""
+        ];
+        if (foundRow > 0) {
+          taskSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
+        } else {
+          taskSheet.appendRow(rowData);
+        }
+        response = { status: "success", message: "Task saved" };
+      }
+    } else if (action === "delete_task") {
+      var taskId = data.taskId;
+      if (taskId && taskSheet.getLastRow() > 1) {
+        var ids = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, 1).getValues();
+        for (var i = 0; i < ids.length; i++) {
+          if (String(ids[i][0]) === String(taskId)) {
+            taskSheet.deleteRow(i + 2);
+            break;
+          }
+        }
+        response = { status: "success", message: "Task deleted" };
+      }
+    } else if (action === "save_user") {
+      var user = data.user;
+      if (user) {
+        var userHeaders = ["Họ và tên", "Email", "Mật khẩu", "Vai trò", "Phòng ban", "Ngày tạo"];
+        if (userSheet.getLastRow() === 0) {
+          userSheet.appendRow(userHeaders);
+          userSheet.getRange(1, 1, 1, userHeaders.length).setFontWeight("bold").setBackground("#F0FDF4");
+        }
+        var foundRow = -1;
+        if (userSheet.getLastRow() > 1) {
+          var emails = userSheet.getRange(2, 2, userSheet.getLastRow() - 1, 1).getValues();
+          for (var i = 0; i < emails.length; i++) {
+            if (String(emails[i][0]).toLowerCase() === String(user.email).toLowerCase()) {
+              foundRow = i + 2;
+              break;
+            }
+          }
+        }
+        var rowData = [
+          user.name || "",
+          user.email || "",
+          user.password || "",
+          user.role || "",
+          user.department || "",
+          user.createdAt || ""
+        ];
+        if (foundRow > 0) {
+          userSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
+        } else {
+          userSheet.appendRow(rowData);
+        }
+        response = { status: "success", message: "User saved" };
+      }
+    } else if (action === "delete_user") {
+      var email = data.email;
+      if (email && userSheet.getLastRow() > 1) {
+        var emails = userSheet.getRange(2, 2, userSheet.getLastRow() - 1, 1).getValues();
+        for (var i = 0; i < emails.length; i++) {
+          if (String(emails[i][0]).toLowerCase() === String(email).toLowerCase()) {
+            userSheet.deleteRow(i + 2);
+            break;
+          }
+        }
+        response = { status: "success", message: "User deleted" };
+      }
+    }
+  } catch (err) {
+    response = { status: "error", message: err.toString() };
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify(response))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Web App active" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+                            navigator.clipboard.writeText(code);
+                            setIsCopied(true);
+                            setTimeout(() => setIsCopied(false), 2000);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold cursor-pointer transition-all shadow-sm"
+                        >
+                          {isCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          <span>{isCopied ? "Đã sao chép!" : "Sao chép toàn bộ mã"}</span>
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-auto bg-slate-950 p-4 rounded-b-xl border border-t-0 border-slate-800 font-mono text-[10px] text-indigo-300 leading-relaxed select-all">
+                        <pre>{`function doPost(e) {
+  var response = { status: "error", message: "Unknown action" };
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var action = data.action;
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // Tạo sheet nếu chưa có
+    var taskSheet = ss.getSheetByName("Nhiệm vụ") || ss.getSheetByName("Tasks");
+    if (!taskSheet) {
+      taskSheet = ss.insertSheet("Nhiệm vụ");
+    }
+    var userSheet = ss.getSheetByName("Nhân sự") || ss.getSheetByName("Users");
+    if (!userSheet) {
+      userSheet = ss.insertSheet("Nhân sự");
+    }
+    
+    if (action === "push") {
+      var tasks = data.tasks || [];
+      var users = data.users || [];
+      
+      // 1. Ghi dữ liệu Nhiệm vụ
+      taskSheet.clear();
+      var taskHeaders = ["ID", "Tiêu đề", "Mô tả", "Ngày bắt đầu", "Hạn chót", "Trạng thái", "Tiến độ (%)", "Độ ưu tiên", "Người chịu trách nhiệm", "Email người chịu trách nhiệm", "Người kiểm duyệt", "Phòng ban", "Ngày tạo", "Cập nhật lúc"];
+      taskSheet.appendRow(taskHeaders);
+      taskSheet.getRange(1, 1, 1, taskHeaders.length).setFontWeight("bold").setBackground("#EEF2F6");
+      
+      if (tasks.length > 0) {
+        var taskRows = tasks.map(function(t) {
+          return [
+            t.id || "",
+            t.title || "",
+            t.description || "",
+            t.startDate || "",
+            t.dueDate || "",
+            t.status || "",
+            t.progress || 0,
+            t.priority || "",
+            t.assignee || "",
+            t.assigneeEmail || "",
+            t.reviewer || "",
+            t.department || "",
+            t.createdAt || "",
+            t.updatedAt || ""
+          ];
+        });
+        taskSheet.getRange(2, 1, taskRows.length, taskHeaders.length).setValues(taskRows);
+      }
+      
+      // 2. Ghi dữ liệu Nhân sự
+      userSheet.clear();
+      var userHeaders = ["Họ và tên", "Email", "Mật khẩu", "Vai trò", "Phòng ban", "Ngày tạo"];
+      userSheet.appendRow(userHeaders);
+      userSheet.getRange(1, 1, 1, userHeaders.length).setFontWeight("bold").setBackground("#F0FDF4");
+      
+      if (users.length > 0) {
+        var userRows = users.map(function(u) {
+          return [
+            u.name || "",
+            u.email || "",
+            u.password || "",
+            u.role || "",
+            u.department || "",
+            u.createdAt || ""
+          ];
+        });
+        userSheet.getRange(2, 1, userRows.length, userHeaders.length).setValues(userRows);
+      }
+      
+      response = { status: "success", message: "Đồng bộ dữ liệu thành công!" };
+      
+    } else if (action === "pull") {
+      var tasks = [];
+      var users = [];
+      
+      // 1. Đọc dữ liệu Nhiệm vụ
+      if (taskSheet.getLastRow() > 1) {
+        var taskValues = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, 14).getValues();
+        tasks = taskValues.map(function(row) {
+          return {
+            id: String(row[0]),
+            title: String(row[1]),
+            description: String(row[2]),
+            startDate: row[3] ? new Date(row[3]).toISOString().slice(0, 10) : "",
+            dueDate: row[4] ? new Date(row[4]).toISOString().slice(0, 10) : "",
+            status: String(row[5]),
+            progress: Number(row[6]) || 0,
+            priority: String(row[7]),
+            assignee: String(row[8]),
+            assigneeEmail: String(row[9]),
+            reviewer: String(row[10]),
+            department: String(row[11]),
+            createdAt: row[12] ? new Date(row[12]).toISOString() : "",
+            updatedAt: row[13] ? new Date(row[13]).toISOString() : ""
+          };
+        });
+      }
+      
+      // 2. Đọc dữ liệu Nhân sự
+      if (userSheet.getLastRow() > 1) {
+        var userValues = userSheet.getRange(2, 1, userSheet.getLastRow() - 1, 6).getValues();
+        users = userValues.map(function(row) {
+          return {
+            name: String(row[0]),
+            email: String(row[1]),
+            password: String(row[2]),
+            role: String(row[3]),
+            department: String(row[4]),
+            createdAt: row[5] ? new Date(row[5]).toISOString() : ""
+          };
+        });
+      }
+      
+      response = { status: "success", tasks: tasks, users: users };
+      
+    } else if (action === "save_task") {
+      var task = data.task;
+      if (task) {
+        var taskHeaders = ["ID", "Tiêu đề", "Mô tả", "Ngày bắt đầu", "Hạn chót", "Trạng thái", "Tiến độ (%)", "Độ ưu tiên", "Người chịu trách nhiệm", "Email người chịu trách nhiệm", "Người kiểm duyệt", "Phòng ban", "Ngày tạo", "Cập nhật lúc"];
+        if (taskSheet.getLastRow() === 0) {
+          taskSheet.appendRow(taskHeaders);
+          taskSheet.getRange(1, 1, 1, taskHeaders.length).setFontWeight("bold").setBackground("#EEF2F6");
+        }
+        var foundRow = -1;
+        if (taskSheet.getLastRow() > 1) {
+          var ids = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, 1).getValues();
+          for (var i = 0; i < ids.length; i++) {
+            if (String(ids[i][0]) === String(task.id)) {
+              foundRow = i + 2;
+              break;
+            }
+          }
+        }
+        var rowData = [
+          task.id || "",
+          task.title || "",
+          task.description || "",
+          task.startDate || "",
+          task.dueDate || "",
+          task.status || "",
+          task.progress || 0,
+          task.priority || "",
+          task.assignee || "",
+          task.assigneeEmail || "",
+          task.reviewer || "",
+          task.department || "",
+          task.createdAt || "",
+          task.updatedAt || ""
+        ];
+        if (foundRow > 0) {
+          taskSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
+        } else {
+          taskSheet.appendRow(rowData);
+        }
+        response = { status: "success", message: "Task saved" };
+      }
+    } else if (action === "delete_task") {
+      var taskId = data.taskId;
+      if (taskId && taskSheet.getLastRow() > 1) {
+        var ids = taskSheet.getRange(2, 1, taskSheet.getLastRow() - 1, 1).getValues();
+        for (var i = 0; i < ids.length; i++) {
+          if (String(ids[i][0]) === String(taskId)) {
+            taskSheet.deleteRow(i + 2);
+            break;
+          }
+        }
+        response = { status: "success", message: "Task deleted" };
+      }
+    } else if (action === "save_user") {
+      var user = data.user;
+      if (user) {
+        var userHeaders = ["Họ và tên", "Email", "Mật khẩu", "Vai trò", "Phòng ban", "Ngày tạo"];
+        if (userSheet.getLastRow() === 0) {
+          userSheet.appendRow(userHeaders);
+          userSheet.getRange(1, 1, 1, userHeaders.length).setFontWeight("bold").setBackground("#F0FDF4");
+        }
+        var foundRow = -1;
+        if (userSheet.getLastRow() > 1) {
+          var emails = userSheet.getRange(2, 2, userSheet.getLastRow() - 1, 1).getValues();
+          for (var i = 0; i < emails.length; i++) {
+            if (String(emails[i][0]).toLowerCase() === String(user.email).toLowerCase()) {
+              foundRow = i + 2;
+              break;
+            }
+          }
+        }
+        var rowData = [
+          user.name || "",
+          user.email || "",
+          user.password || "",
+          user.role || "",
+          user.department || "",
+          user.createdAt || ""
+        ];
+        if (foundRow > 0) {
+          userSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
+        } else {
+          userSheet.appendRow(rowData);
+        }
+        response = { status: "success", message: "User saved" };
+      }
+    } else if (action === "delete_user") {
+      var email = data.email;
+      if (email && userSheet.getLastRow() > 1) {
+        var emails = userSheet.getRange(2, 2, userSheet.getLastRow() - 1, 1).getValues();
+        for (var i = 0; i < emails.length; i++) {
+          if (String(emails[i][0]).toLowerCase() === String(email).toLowerCase()) {
+            userSheet.deleteRow(i + 2);
+            break;
+          }
+        }
+        response = { status: "success", message: "User deleted" };
+      }
+    }
+  } catch (err) {
+    response = { status: "error", message: err.toString() };
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify(response))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Web App active" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}`}</pre>
                       </div>
                     </div>
                   </div>
