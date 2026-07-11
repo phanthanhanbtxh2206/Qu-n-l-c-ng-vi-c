@@ -117,6 +117,8 @@ export default function App() {
   });
   const [showAdvancedSync, setShowAdvancedSync] = useState(false);
   const [customSpreadsheetId, setCustomSpreadsheetId] = useState("");
+  const [domainAuthError, setDomainAuthError] = useState(false);
+  const [showSheetsGuide, setShowSheetsGuide] = useState(false);
 
   const addSyncLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -500,6 +502,7 @@ export default function App() {
   // 4. Admin Google Sheets Sync System (Real synchronization)
   const handleConnectGoogle = async () => {
     setIsGoogleLoading(true);
+    setDomainAuthError(false);
     try {
       const result = await googleSignIn();
       if (result) {
@@ -512,7 +515,16 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setSyncStatusMsg(`Liên kết Google thất bại: ${err.message}`);
+      if (
+        err.code === "auth/unauthorized-domain" ||
+        err.message?.includes("unauthorized-domain") ||
+        err.message?.includes("auth/unauthorized-domain")
+      ) {
+        setDomainAuthError(true);
+        setSyncStatusMsg("Liên kết Google thất bại: Miền (domain) trang web chưa được ủy quyền trong Firebase.");
+      } else {
+        setSyncStatusMsg(`Liên kết Google thất bại: ${err.message}`);
+      }
       addSyncLog(`Liên kết Google thất bại: ${err.message}`);
     } finally {
       setIsGoogleLoading(false);
@@ -1540,25 +1552,155 @@ export default function App() {
               </div>
 
               {/* Toggle advanced settings button */}
-              <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
-                <button
-                  onClick={() => {
-                    setShowAdvancedSync(!showAdvancedSync);
-                    if (spreadsheetId) {
-                      setCustomSpreadsheetId(spreadsheetId);
-                    }
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-semibold transition-all cursor-pointer"
-                >
-                  <Settings2 className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{showAdvancedSync ? "Ẩn cấu hình chuyên sâu" : "Hiện cài đặt chuyên sâu & nhật ký đồng bộ"}</span>
-                </button>
+              <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      setShowAdvancedSync(!showAdvancedSync);
+                      if (spreadsheetId) {
+                        setCustomSpreadsheetId(spreadsheetId);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-semibold transition-all cursor-pointer"
+                  >
+                    <Settings2 className="w-3.5 h-3.5 text-slate-500" />
+                    <span>{showAdvancedSync ? "Ẩn cấu hình" : "Cấu hình nâng cao & Nhật ký"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowSheetsGuide(!showSheetsGuide)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all cursor-pointer ${
+                      showSheetsGuide || domainAuthError
+                        ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
+                        : "border-slate-200 text-indigo-600 hover:text-indigo-800 hover:bg-slate-50"
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <span>{showSheetsGuide ? "Ẩn hướng dẫn liên kết" : "Hướng dẫn bật Google Sheets & Sửa lỗi"}</span>
+                  </button>
+                </div>
                 {spreadsheetId && (
                   <span className="text-[10px] text-slate-400 font-mono">
                     Spreadsheet ID: <span className="font-semibold text-slate-600 select-all">{spreadsheetId.slice(0, 10)}...{spreadsheetId.slice(-10)}</span>
                   </span>
                 )}
               </div>
+
+              {/* DYNAMIC GOOGLE SHEETS & FIREBASE AUTH TROUBLESHOOTING GUIDE */}
+              {(showSheetsGuide || domainAuthError) && (
+                <div className="mt-5 p-5 rounded-2xl bg-slate-50 border border-slate-200/80 text-slate-700 text-xs space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-red-100 rounded-lg text-red-600 shrink-0">
+                        <AlertCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-[13px] uppercase tracking-wide">
+                          HƯỚNG DẪN CHI TIẾT BẬT KẾT NỐI GOOGLE SHEETS & SỬA LỖI DOMAIN
+                        </h4>
+                        <p className="text-[10px] text-slate-500">Giải quyết triệt để lỗi "Firebase: Error (auth/unauthorized-domain)"</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowSheetsGuide(false);
+                        setDomainAuthError(false);
+                      }}
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      Đóng hướng dẫn [X]
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl flex gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold text-amber-900 text-[11px]">Vì sao xảy ra lỗi này?</p>
+                        <p className="text-[11px] text-amber-800 leading-normal">
+                          Để bảo mật, Firebase Authentication yêu cầu bạn phải khai báo (ủy quyền) tất cả các tên miền chạy trang web của bạn trước khi cho phép đăng nhập Google Sheets qua cửa sổ Popup.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <ArrowRight className="w-3.5 h-3.5 text-indigo-500" />
+                        Các bước thực hiện cấu hình trực tiếp trên Firebase Console:
+                      </p>
+                      
+                      <div className="relative border-l border-indigo-100 ml-3 pl-4 space-y-4 text-slate-600">
+                        {/* Step 1 */}
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">1</span>
+                          <p className="font-semibold text-slate-800">Truy cập Firebase Console</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Mở trình duyệt và truy cập vào <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-bold inline-flex items-center gap-0.5">Firebase Console (nhấp vào đây) <ArrowRight className="w-3 h-3 inline" /></a>. Nhấp chọn dự án của bạn (Tên dự án hiện tại là: <strong className="text-slate-800 font-mono">invertible-chord-8wjrd</strong>).
+                          </p>
+                        </div>
+
+                        {/* Step 2 */}
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">2</span>
+                          <p className="font-semibold text-slate-800">Vào mục Authentication</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Từ menu bên trái màn hình, tìm và chọn mục <strong>Build</strong> rồi click <strong>Authentication</strong>.
+                          </p>
+                        </div>
+
+                        {/* Step 3 */}
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">3</span>
+                          <p className="font-semibold text-slate-800">Mở phần Settings</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Tại màn hình Authentication, nhìn lên thanh menu ngang phía trên và chọn tab <strong>Settings</strong> (Cài đặt).
+                          </p>
+                        </div>
+
+                        {/* Step 4 */}
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">4</span>
+                          <p className="font-semibold text-slate-800">Thêm Tên miền trang web của bạn</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Ở danh sách menu dọc bên trái của phần Settings, nhấp chọn mục <strong>Authorized domains</strong> (Miền được ủy quyền). Sau đó nhấp vào nút <strong>Add domain</strong> (Thêm miền) ở góc bên phải.
+                          </p>
+                        </div>
+
+                        {/* Step 5 */}
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">5</span>
+                          <p className="font-semibold text-slate-800">Nhập thông tin tên miền ứng dụng</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Nhập chính xác tên miền trang web của bạn hiện tại vào ô trống rồi nhấn nút <strong>Add</strong>.
+                          </p>
+                          
+                          <div className="mt-2 p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-slate-500">Tên miền trang web của bạn cần thêm:</span>
+                              <span className="text-[10px] bg-red-50 text-red-600 border border-red-100 font-bold px-2 py-0.5 rounded uppercase">Cần thêm cái này</span>
+                            </div>
+                            <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 select-all font-mono text-xs text-indigo-600 font-bold">
+                              <span>{typeof window !== "undefined" ? window.location.hostname : "phanthanhanbtxh2206.github.io"}</span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 italic">
+                              * Chú ý: Chỉ nhập tên miền gốc như trên, tuyệt đối KHÔNG nhập thêm tiền tố <code className="text-red-500">https://</code> hay hậu tố đường dẫn con như <code className="text-red-500">/Qu-n-l-c-ng-vi-c/</code>.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Step 6 */}
+                        <div className="relative">
+                          <span className="absolute -left-[25px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">6</span>
+                          <p className="font-semibold text-slate-800">Hoàn thành & Thử lại</p>
+                          <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                            Sau khi nhấn Add, tên miền sẽ xuất hiện trong danh sách ủy quyền. Bạn hãy quay lại trang web này, tải lại trang web (F5) rồi nhấp nút <strong>Kết nối Google Sheets</strong>. Lúc này cửa sổ đăng nhập Google sẽ hiển thị thành công!
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ADVANCED SYNC SETTINGS PANEL */}
               {showAdvancedSync && (
