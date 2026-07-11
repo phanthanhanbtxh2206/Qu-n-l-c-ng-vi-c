@@ -470,32 +470,127 @@ export default function TaskBoardView({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 tech-bg-grid pb-12">
+      {/* EMBEDDED HIGH-TECH STYLES */}
+      <style>{`
+        @keyframes techBlink {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        @keyframes scanningLine {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(100%); }
+        }
+        .tech-bg-grid {
+          background-size: 32px 32px;
+          background-image: 
+            linear-gradient(to right, rgba(99, 102, 241, 0.02) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(99, 102, 241, 0.02) 1px, transparent 1px);
+        }
+        .tech-card-sc {
+          position: relative;
+          transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+          border: 1px solid rgba(226, 232, 240, 0.8);
+          background: rgba(255, 255, 255, 0.85);
+          backdrop-filter: blur(12px);
+        }
+        .tech-card-sc:hover {
+          transform: translateY(-5px);
+          border-color: rgba(99, 102, 241, 0.45);
+          box-shadow: 0 15px 30px rgba(99, 102, 241, 0.08), 0 0 15px rgba(99, 102, 241, 0.1);
+        }
+        .tech-card-overdue:hover {
+          border-color: rgba(239, 68, 68, 0.45);
+          box-shadow: 0 15px 30px rgba(239, 68, 68, 0.08), 0 0 15px rgba(239, 68, 68, 0.1);
+        }
+        .tech-card-neardue:hover {
+          border-color: rgba(245, 158, 11, 0.45);
+          box-shadow: 0 15px 30px rgba(245, 158, 11, 0.08), 0 0 15px rgba(245, 158, 11, 0.1);
+        }
+        .tech-card-completed:hover {
+          border-color: rgba(16, 185, 129, 0.45);
+          box-shadow: 0 15px 30px rgba(16, 185, 129, 0.08), 0 0 15px rgba(16, 185, 129, 0.1);
+        }
+        .cyber-corner-sc {
+          position: absolute;
+          width: 8px;
+          height: 8px;
+          border-color: rgba(99, 102, 241, 0.35);
+          pointer-events: none;
+          transition: all 0.3s ease;
+        }
+        .tech-card-sc:hover .cyber-corner-sc {
+          border-color: rgba(99, 102, 241, 0.85);
+          width: 12px;
+          height: 12px;
+        }
+        .tech-card-overdue:hover .cyber-corner-sc {
+          border-color: rgba(239, 68, 68, 0.85);
+        }
+        .tech-card-neardue:hover .cyber-corner-sc {
+          border-color: rgba(245, 158, 11, 0.85);
+        }
+        .tech-card-completed:hover .cyber-corner-sc {
+          border-color: rgba(16, 185, 129, 0.85);
+        }
+        .corner-tl-sc { top: -1px; left: -1px; border-top: 2px solid; border-left: 2px solid; }
+        .corner-tr-sc { top: -1px; right: -1px; border-top: 2px solid; border-right: 2px solid; }
+        .corner-bl-sc { bottom: -1px; left: -1px; border-bottom: 2px solid; border-left: 2px solid; }
+        .corner-br-sc { bottom: -1px; right: -1px; border-bottom: 2px solid; border-right: 2px solid; }
+        
+        .glowing-bar {
+          background: linear-gradient(90deg, #6366f1, #06b6d4, #6366f1);
+          background-size: 200% auto;
+          animation: glowRun 3s linear infinite;
+        }
+        @keyframes glowRun {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+      `}</style>
+
       {/* Header and Add Task bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">Quản Lý Nhiệm Vụ</h2>
-          <p className="text-xs text-slate-500">
-            Xem, thêm mới, cập nhật tiến độ và đánh giá kết quả công việc.
-          </p>
-        </div>
+      <div className="relative overflow-hidden bg-slate-900 text-white rounded-2xl p-6 border border-slate-800 shadow-xl shadow-slate-950/20">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none" />
+        <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
+        
+        <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+              <span className="text-[9px] font-mono font-bold text-indigo-400 uppercase tracking-widest">
+                TASK_DISPATCHER_PRO_V1.2
+              </span>
+            </div>
+            <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+              Quản Lý & Phân Phối Nhiệm Vụ
+              <span className="text-[10px] font-mono font-normal text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">
+                ACTIVE_TASKS: {filteredTasks.length}
+              </span>
+            </h2>
+            <p className="text-xs text-slate-400">
+              Phát khởi tạo, kiểm duyệt và phân phối tiến trình công việc của toàn đơn vị.
+            </p>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          <button
-            onClick={() => setIsFolderMgrOpen(true)}
-            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold cursor-pointer transition-all"
-          >
-            <Folder className="w-4 h-4 text-indigo-500" />
-            Quản lý thư mục quy trình
-          </button>
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto shrink-0">
+            <button
+              onClick={() => setIsFolderMgrOpen(true)}
+              className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl border border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800 hover:text-white text-xs font-semibold cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <Folder className="w-4 h-4 text-indigo-400" />
+              Thư mục quy trình
+            </button>
 
-          <button
-            onClick={() => setIsNewTaskOpen(true)}
-            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm shadow-indigo-600/10 cursor-pointer transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            Thêm nhiệm vụ mới
-          </button>
+            <button
+              onClick={() => setIsNewTaskOpen(true)}
+              className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <Plus className="w-4 h-4 animate-bounce" />
+              Tạo nhiệm vụ mới
+            </button>
+          </div>
         </div>
       </div>
 
@@ -602,41 +697,49 @@ export default function TaskBoardView({
             return (
               <div
                 key={task.id}
-                className={`bg-white rounded-2xl p-5 border shadow-sm flex flex-col justify-between hover:shadow-md transition-all ${
+                className={`tech-card-sc p-5 rounded-2xl flex flex-col justify-between overflow-hidden group/card ${
                   isOverdue 
-                    ? "border-red-200 bg-red-50/5" 
+                    ? "tech-card-overdue border-red-200/60 bg-red-50/5" 
                     : isNearDue 
-                    ? "border-amber-200 bg-amber-50/5" 
+                    ? "tech-card-neardue border-amber-200/60 bg-amber-50/5" 
+                    : task.status === "Đã hoàn thành"
+                    ? "tech-card-completed border-emerald-200/60 bg-emerald-50/5"
                     : "border-slate-100"
                 }`}
               >
+                {/* Cyber Corner Ornaments */}
+                <div className="cyber-corner-sc corner-tl-sc" />
+                <div className="cyber-corner-sc corner-tr-sc" />
+                <div className="cyber-corner-sc corner-bl-sc" />
+                <div className="cyber-corner-sc corner-br-sc" />
+
                 {/* Header & Status */}
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-3">
-                    <span className="text-[10px] font-bold text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    <span className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100/80 px-2.5 py-1 rounded-md uppercase tracking-wider font-mono">
                       {task.department}
                     </span>
 
                     <span
-                      className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-md border font-mono ${
                         task.status === "Đã hoàn thành"
-                          ? "bg-emerald-100 text-emerald-700"
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                           : task.status === "Cần đánh giá"
-                          ? "bg-amber-100 text-amber-700 animate-pulse"
+                          ? "bg-amber-50 border-amber-200 text-amber-700 animate-pulse font-extrabold"
                           : isOverdue
-                          ? "bg-red-100 text-red-700 font-extrabold"
+                          ? "bg-red-50 border-red-200 text-red-700 font-extrabold"
                           : isNearDue
-                          ? "bg-orange-100 text-orange-700 font-bold"
+                          ? "bg-orange-50 border-orange-200 text-orange-700 font-bold"
                           : task.status === "Đang thực hiện"
-                          ? "bg-blue-100 text-blue-700"
-                          : "bg-slate-100 text-slate-600"
+                          ? "bg-blue-50 border-blue-200 text-blue-700"
+                          : "bg-slate-50 border-slate-200 text-slate-600"
                       }`}
                     >
-                      {isOverdue ? "Trễ hạn" : isNearDue ? "Sắp đến hạn" : task.status}
+                      {isOverdue ? "TRỄ HẠN" : isNearDue ? "CẬN HẠN" : task.status.toUpperCase()}
                     </span>
                   </div>
 
-                  <h3 className="font-bold text-slate-800 text-sm mb-1 line-clamp-1" title={task.title}>
+                  <h3 className="font-bold text-slate-800 text-sm mb-1.5 line-clamp-1 group-hover/card:text-indigo-600 transition-colors" title={task.title}>
                     {task.title}
                   </h3>
 
@@ -645,7 +748,7 @@ export default function TaskBoardView({
                     <span
                       className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md ${
                         task.priority === "Gấp"
-                          ? "bg-rose-50 text-rose-600 border border-rose-100"
+                          ? "bg-rose-50 text-rose-600 border border-rose-150 animate-pulse"
                           : "bg-slate-50 text-slate-500 border border-slate-100"
                       }`}
                     >
@@ -667,7 +770,7 @@ export default function TaskBoardView({
                       )}
                       {task.isRecurring && (
                         <span className="flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">
-                          <Repeat className="w-2.5 h-2.5 shrink-0" />
+                          <Repeat className="w-2.5 h-2.5 shrink-0 animate-spin" style={{ animationDuration: "12s" }} />
                           Lặp lại: {task.recurrenceInterval === "tự chọn" ? (task.recurrenceCustomDate || "Tự chọn") : task.recurrenceInterval}
                         </span>
                       )}
@@ -680,16 +783,16 @@ export default function TaskBoardView({
 
                   {/* Sub-tasks checklist progress */}
                   {task.subTasks && task.subTasks.length > 0 && (
-                    <div className="mb-4 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100/50">
+                    <div className="mb-4 bg-slate-50/70 p-2.5 rounded-xl border border-slate-150/50 backdrop-blur-sm">
                       <div className="flex justify-between items-center text-[9px] font-extrabold text-slate-500 uppercase tracking-wide mb-1.5">
                         <span className="flex items-center gap-1 text-slate-600">
-                          <ListTodo className="w-3 h-3 text-indigo-500" />
+                          <ListTodo className="w-3 h-3 text-indigo-500 animate-pulse" />
                           Các bước ({task.subTasks.filter((s) => s.completed).length}/{task.subTasks.length})
                         </span>
-                        <span className="text-[8px] text-slate-400 font-normal normal-case">
-                          (Tính từ ngày tạo: {task.createdAt ? task.createdAt.split("-").reverse().join("/") : ""})
+                        <span className="text-[8px] text-slate-400 font-normal normal-case font-mono">
+                          (Tính từ: {task.createdAt ? task.createdAt.split("-").reverse().join("/") : ""})
                         </span>
-                        <span>
+                        <span className="font-mono text-indigo-600">
                           {Math.round((task.subTasks.filter((s) => s.completed).length / task.subTasks.length) * 100)}%
                         </span>
                       </div>
@@ -697,7 +800,7 @@ export default function TaskBoardView({
                         {task.subTasks.map((st) => {
                           const dateInfo = getStepStatus(task.createdAt, st.durationDays);
                           return (
-                            <div key={st.id} className="flex items-start gap-2 text-[11px] text-slate-600">
+                            <div key={st.id} className="flex items-start gap-2 text-[11px] text-slate-600 hover:text-slate-950 transition-colors">
                               <input
                                 type="checkbox"
                                 checked={st.completed}
@@ -732,19 +835,19 @@ export default function TaskBoardView({
                                 {dateInfo && (
                                   <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                                     {st.completed ? (
-                                      <span className="text-[8px] px-1 py-0.2 bg-emerald-50 text-emerald-600 border border-emerald-100/60 rounded">
+                                      <span className="text-[8px] px-1 py-0.2 bg-emerald-50 text-emerald-600 border border-emerald-100/60 rounded font-mono">
                                         Đã xong (Hạn: {dateInfo.formattedDate})
                                       </span>
                                     ) : dateInfo.isOverdue ? (
-                                      <span className="text-[8px] font-bold px-1 py-0.2 bg-rose-50 text-rose-600 border border-rose-100 rounded animate-pulse">
+                                      <span className="text-[8px] font-bold px-1 py-0.2 bg-rose-50 text-rose-600 border border-rose-100 rounded animate-pulse font-mono">
                                         ⚠️ Trễ hạn ({dateInfo.formattedDate})
                                       </span>
                                     ) : dateInfo.isNearDue ? (
-                                      <span className="text-[8px] font-bold px-1 py-0.2 bg-amber-50 text-amber-700 border border-amber-150 rounded animate-pulse">
+                                      <span className="text-[8px] font-bold px-1 py-0.2 bg-amber-50 text-amber-700 border border-amber-150 rounded animate-pulse font-mono">
                                         ⏳ Sắp đến hạn ({dateInfo.formattedDate})
                                       </span>
                                     ) : (
-                                      <span className="text-[8px] px-1 py-0.2 bg-slate-50 text-slate-500 border border-slate-100 rounded">
+                                      <span className="text-[8px] px-1 py-0.2 bg-slate-50 text-slate-500 border border-slate-100 rounded font-mono">
                                         Hạn: {dateInfo.formattedDate}
                                       </span>
                                     )}
@@ -769,14 +872,14 @@ export default function TaskBoardView({
                 <div>
                   {/* Progress slider / bar */}
                   <div className="mb-4 space-y-1.5">
-                    <div className="flex justify-between items-center text-[10px] font-bold text-slate-500">
-                      <span>Tiến độ</span>
-                      <span>{task.progress}%</span>
+                    <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 font-mono">
+                      <span>Tiến trình hoàn thành</span>
+                      <span className="text-indigo-600">{task.progress}%</span>
                     </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden relative">
                       <div
                         className={`h-full rounded-full transition-all duration-300 ${
-                          task.status === "Đã hoàn thành" ? "bg-emerald-500" : "bg-indigo-600"
+                          task.status === "Đã hoàn thành" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "glowing-bar shadow-[0_0_8px_rgba(99,102,241,0.4)]"
                         }`}
                         style={{ width: `${task.progress}%` }}
                       />
